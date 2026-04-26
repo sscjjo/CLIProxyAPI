@@ -1,0 +1,56 @@
+name: Sync upstream
+
+on:
+  schedule:
+    # GitHub Actions cron uses UTC. 18:00 UTC == 02:00 Asia/Shanghai
+    - cron: "0 18 * * *"
+  workflow_dispatch: {}
+
+# We rely on a PAT in secrets.UPSTREAM_SYNC_TOKEN because the default GITHUB_TOKEN
+# is often blocked from pushing commits that touch workflow files.
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-upstream
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout fork (PAT)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.UPSTREAM_SYNC_TOKEN }}
+
+      - name: Force align with upstream (keep this workflow)
+        env:
+          UPSTREAM_REPO: router-for-me/CLIProxyAPI
+          BRANCH: main
+        run: |
+          set -euo pipefail
+
+          git config user.name  "upstream-sync-bot"
+          git config user.email "upstream-sync-bot@users.noreply.github.com"
+
+          # Preserve this workflow file so the reset doesn't delete it.
+          mkdir -p /tmp/upstream-sync
+          cp .github/workflows/sync-upstream.yml /tmp/upstream-sync/sync-upstream.yml
+
+          git remote add upstream "https://github.com/${UPSTREAM_REPO}.git" 2>/dev/null || true
+          git fetch upstream
+
+          git checkout "${BRANCH}"
+          git reset --hard "upstream/${BRANCH}"
+
+          mkdir -p .github/workflows
+          cp /tmp/upstream-sync/sync-upstream.yml .github/workflows/sync-upstream.yml
+
+          git add .github/workflows/sync-upstream.yml
+          if ! git diff --cached --quiet; then
+            git commit -m "chore: keep upstream sync workflow"
+          fi
+
+          git push --force-with-lease origin "${BRANCH}"
